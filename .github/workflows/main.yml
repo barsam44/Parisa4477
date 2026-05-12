@@ -1,12 +1,18 @@
-name: Download OpSuS GNOME ISO and split
+name: OpSuS GNOME → 50 MB max‑compressed split archives
 
 on:
   workflow_dispatch:
 
 jobs:
-  split-iso:
+  compress-and-commit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install tools
         run: |
           sudo apt-get update
@@ -15,33 +21,37 @@ jobs:
       - name: Download GNOME ISO
         run: |
           set -e
-          mkdir -p downloads
-          # Try primary URL first, then fallback, then another mirror
-          curl -L --retry 3 -o downloads/opsus-gnome.iso \
-            "https://sourceforge.net/projects/opsus/files/latest/download/opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso" \
-          || curl -L -o downloads/opsus-gnome.iso \
-            "http://ftp.svenskalinuxforeningen.se/distributions/exton/exton-opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso" \
-          || curl -L -o downloads/opsus-gnome.iso \
-            "https://downloads.sourceforge.net/project/opsus/opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso"
+          mkdir -p split-archives
+          # Browser‑mimic user agent to avoid SourceForge blocks
+          curl -L --retry 5 --retry-delay 10 \
+            -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0" \
+            -o opsus-gnome.iso \
+            "https://sourceforge.net/projects/opsus/files/latest/download" \
+          || curl -L --retry 5 \
+            -H "User-Agent: Mozilla/5.0" \
+            -o opsus-gnome.iso \
+            "http://ftp.svenskalinuxforeningen.se/distributions/exton/exton-opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso"
 
-          # Check if the file is at least 100 MB
-          size=$(stat -c%s downloads/opsus-gnome.iso)
+          size=$(stat -c%s opsus-gnome.iso)
           if [ "$size" -lt 100000000 ]; then
-            echo "Downloaded file is too small (${size} bytes). Likely download failed."
+            echo "Download failed or ISO too small (${size} bytes). Aborting."
             exit 1
           fi
-          echo "Downloaded ISO: $((size / 1024 / 1024)) MB"
+          echo "Downloaded ${size} bytes ($((size / 1024 / 1024)) MB)"
 
-      - name: Split into 50 MB archives
+      - name: Ultra‑compress and split into 50 MB volumes
         run: |
           set -e
-          mkdir -p archives
-          7z a -v50m archives/opsus-gnome.7z downloads/opsus-gnome.iso
-          echo "Split files:"
-          ls -lh archives/
+          7z a -v50m -mx=9 -m0=lzma2 -md=256m -ms=on -mmt=on \
+            split-archives/opsus-gnome.7z opsus-gnome.iso
+          rm opsus-gnome.iso   # save disk space
+          echo "Created compressed split files:"
+          ls -lh split-archives/
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: opsus-gnome-50mb-parts
-          path: archives/
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add split-archives/
+          git commit -m "Add OpSuS GNOME ISO (max-compressed 50 MB parts)" || echo "Nothing to commit"
+          git push
