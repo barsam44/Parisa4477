@@ -1,7 +1,7 @@
-name: Download OpSuS GNOME ISO and split into 50MB
+name: Download OpSuS GNOME ISO and split
 
 on:
-  workflow_dispatch:   # run manually from Actions tab
+  workflow_dispatch:
 
 jobs:
   split-iso:
@@ -14,19 +14,33 @@ jobs:
 
       - name: Download GNOME ISO
         run: |
+          set -e
           mkdir -p downloads
-          SF_URL="https://sourceforge.net/projects/opsus/files/latest/download/opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso"
-          ALT_URL="http://ftp.svenskalinuxforeningen.se/distributions/exton/exton-opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso"
-          echo "Downloading GNOME ISO (2640 MB) …"
-          curl -L -o downloads/opsus-gnome.iso "$SF_URL" || curl -L -o downloads/opsus-gnome.iso "$ALT_URL"
+          # Try primary URL first, then fallback, then another mirror
+          curl -L --retry 3 -o downloads/opsus-gnome.iso \
+            "https://sourceforge.net/projects/opsus/files/latest/download/opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso" \
+          || curl -L -o downloads/opsus-gnome.iso \
+            "http://ftp.svenskalinuxforeningen.se/distributions/exton/exton-opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso" \
+          || curl -L -o downloads/opsus-gnome.iso \
+            "https://downloads.sourceforge.net/project/opsus/opsus-64bit-tumbleweed-gnome-refractasnapshot-2640mb-251115.iso"
 
-      - name: Create 50 MB split archives
+          # Check if the file is at least 100 MB
+          size=$(stat -c%s downloads/opsus-gnome.iso)
+          if [ "$size" -lt 100000000 ]; then
+            echo "Downloaded file is too small (${size} bytes). Likely download failed."
+            exit 1
+          fi
+          echo "Downloaded ISO: $((size / 1024 / 1024)) MB"
+
+      - name: Split into 50 MB archives
         run: |
+          set -e
           mkdir -p archives
-          # -v50m = split into volumes of 50 MB
           7z a -v50m archives/opsus-gnome.7z downloads/opsus-gnome.iso
+          echo "Split files:"
+          ls -lh archives/
 
-      - name: Upload archives
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: opsus-gnome-50mb-parts
